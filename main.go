@@ -116,6 +116,8 @@ func startHTTPServer(saveDir string) {
 		extenstion := filepath.Ext(file.Filename)
 		// Remove extension from filename
 		fileNameWithoutExt := file.Filename[0 : len(file.Filename)-len(extenstion)]
+
+		// Save file with current date and received_video suffix
 		fileName := fmt.Sprintf("%s_%s_%s%s", currentDate, fileNameWithoutExt, "received_video", extenstion)
 		savePath := filepath.Join(saveDir, fileName)
 		if err := c.SaveUploadedFile(file, savePath); err != nil {
