@@ -1,18 +1,17 @@
 package main
 
 import (
-	"bytes"
-	"crypto/rand"
 	"encoding/binary"
 	"fmt"
 	"io"
 	"log"
 	"net"
+	"os"
+	"path/filepath"
 	"time"
 )
 
-type FileServer struct {
-}
+type FileServer struct{}
 
 func (fs *FileServer) start() {
 	fmt.Println("FileServer started")
@@ -32,54 +31,81 @@ func (fs *FileServer) start() {
 }
 
 func (fs *FileServer) readLoop(conn net.Conn) {
-	buf := new(bytes.Buffer)
-	for {
-		var size int64
-		binary.Read(conn, binary.LittleEndian, &size)
-		n, err := io.CopyN(buf, conn, size)
-		if err != nil {
-			log.Fatal(err)
-		}
+	defer conn.Close()
 
-		// panic("Received more than 1000 bytes")
-		fmt.Println(buf.Bytes())
-		fmt.Printf("Received %d bytes over the network\n", n)
+	var size int64
+	err := binary.Read(conn, binary.LittleEndian, &size)
+	if err != nil {
+		log.Fatal(err)
 	}
+
+	// Create a new file to save the received data
+	tempDir := "./tmp" // " os.TempDir()"
+	err = os.MkdirAll(tempDir, 0755)
+	if err != nil {
+		log.Fatal(err)
+	}
+	receivedFilePath := filepath.Join(tempDir, "received_video.mp4")
+	file, err := os.Create(receivedFilePath)
+	if err != nil {
+		log.Fatal(err)
+	}
+	defer file.Close()
+
+	// Copy the data from the connection to the file
+	n, err := io.CopyN(file, conn, size)
+	if err != nil {
+		log.Fatal(err)
+	}
+
+	fmt.Printf("Received %d bytes and saved to %s\n", n, receivedFilePath)
 }
 
-func sendFile(size int) error {
-	file := make([]byte, size)
-
-	_, err := io.ReadFull(rand.Reader, file)
+func sendFile(filePath string) error {
+	file, err := os.Open(filePath)
 	if err != nil {
 		return err
 	}
+	defer file.Close()
+
+	// Get the file size
+	fileInfo, err := file.Stat()
+	if err != nil {
+		return err
+	}
+	size := fileInfo.Size()
 
 	conn, err := net.Dial("tcp", ":8080")
 	if err != nil {
 		return err
 	}
+	defer conn.Close()
 
-	binary.Write(conn, binary.LittleEndian, int64(size))
-
-	n, err := io.CopyN(conn, bytes.NewReader(file), int64(size))
-
+	// Send the file size first
+	err = binary.Write(conn, binary.LittleEndian, size)
 	if err != nil {
 		return err
 	}
 
-	fmt.Printf("Writtend %d bytes\n over the network \n", n)
+	// Send the file data
+	n, err := io.CopyN(conn, file, size)
+	if err != nil {
+		return err
+	}
 
+	fmt.Printf("Sent %d bytes over the network from file %s\n", n, filePath)
 	return nil
-
 }
 
-// main function
 func main() {
-
+	fileName := "XVR_ch1_main_20210910141900_20210910142500.mp4"
+	// Simulate sending a file after a delay
 	go func() {
 		time.Sleep(4 * time.Second)
-		sendFile(400000)
+		err := sendFile(fileName) // Change this to the actual path of your MP4 file
+		if err != nil {
+			log.Fatal(err)
+		}
 	}()
 
 	server := &FileServer{}
