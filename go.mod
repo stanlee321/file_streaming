@@ -1,4 +1,4 @@
-module file_handler
+module github.com/stanlee321/file_handler
 
 go 1.21.4
 
