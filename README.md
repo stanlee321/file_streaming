@@ -46,7 +46,7 @@ This is a simple Go project that demonstrates how to send and receive files usin
   ```
 - **Send a file:**
   ```sh
-  go run main.go --mode cli --file /path/to/demo.mp4 --address localhost:8080
+  go run main.go --mode cli --file /path/to/demo.mp4 --address 0.0.0.0:8080
   ```
 
 #### HTTP Mode:

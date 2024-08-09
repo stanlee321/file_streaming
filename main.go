@@ -106,9 +106,17 @@ func startHTTPServer(saveDir string) {
 			c.String(400, "Bad request: %v", err)
 			return
 		}
+		// If saveDir does not exists, create it
+		if _, err := os.Stat(saveDir); os.IsNotExist(err) {
+			os.MkdirAll(saveDir, os.ModePerm)
+		}
+
 		// Set current date as YYYYMMDD
 		currentDate := time.Now().Format("20060102")
-		fileName := fmt.Sprintf("%s_%s_%s", currentDate, file.Filename, "received_video.mp4")
+		extenstion := filepath.Ext(file.Filename)
+		// Remove extension from filename
+		fileNameWithoutExt := file.Filename[0 : len(file.Filename)-len(extenstion)]
+		fileName := fmt.Sprintf("%s_%s_%s%s", currentDate, fileNameWithoutExt, "received_video", extenstion)
 		savePath := filepath.Join(saveDir, fileName)
 		if err := c.SaveUploadedFile(file, savePath); err != nil {
 			c.String(500, "Failed to save file: %v", err)
