@@ -2,6 +2,7 @@ package main
 
 import (
 	"encoding/binary"
+	"flag"
 	"fmt"
 	"io"
 	"log"
@@ -9,11 +10,71 @@ import (
 	"os"
 	"path/filepath"
 	"time"
+
+	"github.com/gin-gonic/gin"
 )
 
-type FileServer struct{}
+// Core function to receive a file over TCP
+func receiveFile(conn net.Conn, savePath string) error {
+	defer conn.Close()
 
-func (fs *FileServer) start() {
+	var size int64
+	err := binary.Read(conn, binary.LittleEndian, &size)
+	if err != nil {
+		return err
+	}
+
+	file, err := os.Create(savePath)
+	if err != nil {
+		return err
+	}
+	defer file.Close()
+
+	n, err := io.CopyN(file, conn, size)
+	if err != nil {
+		return err
+	}
+
+	fmt.Printf("Received %d bytes and saved to %s\n", n, savePath)
+	return nil
+}
+
+// Core function to send a file over TCP
+func sendFile(filePath, address string) error {
+	file, err := os.Open(filePath)
+	if err != nil {
+		return err
+	}
+	defer file.Close()
+
+	fileInfo, err := file.Stat()
+	if err != nil {
+		return err
+	}
+	size := fileInfo.Size()
+
+	conn, err := net.Dial("tcp", address)
+	if err != nil {
+		return err
+	}
+	defer conn.Close()
+
+	err = binary.Write(conn, binary.LittleEndian, size)
+	if err != nil {
+		return err
+	}
+
+	n, err := io.CopyN(conn, file, size)
+	if err != nil {
+		return err
+	}
+
+	fmt.Printf("Sent %d bytes from file %s to %s\n", n, filePath, address)
+	return nil
+}
+
+// CLI Mode: FileServer that listens for incoming connections
+func startServer(saveDir string) {
 	fmt.Println("FileServer started")
 	ln, err := net.Listen("tcp", ":8080")
 	if err != nil {
@@ -26,88 +87,65 @@ func (fs *FileServer) start() {
 			log.Fatal(err)
 		}
 
-		go fs.readLoop(conn)
+		go func() {
+			savePath := filepath.Join(saveDir, "received_video.mp4")
+			if err := receiveFile(conn, savePath); err != nil {
+				log.Printf("Error receiving file: %v", err)
+			}
+		}()
 	}
 }
 
-func (fs *FileServer) readLoop(conn net.Conn) {
-	defer conn.Close()
+// HTTP Mode: Gin server for handling file uploads
+func startHTTPServer(saveDir string) {
+	r := gin.Default()
 
-	var size int64
-	err := binary.Read(conn, binary.LittleEndian, &size)
-	if err != nil {
-		log.Fatal(err)
-	}
+	r.POST("/upload", func(c *gin.Context) {
+		file, err := c.FormFile("file")
+		if err != nil {
+			c.String(400, "Bad request: %v", err)
+			return
+		}
+		// Set current date as YYYYMMDD
+		currentDate := time.Now().Format("20060102")
+		fileName := fmt.Sprintf("%s_%s_%s", currentDate, file.Filename, "received_video.mp4")
+		savePath := filepath.Join(saveDir, fileName)
+		if err := c.SaveUploadedFile(file, savePath); err != nil {
+			c.String(500, "Failed to save file: %v", err)
+			return
+		}
 
-	// Create a new file to save the received data
-	tempDir := "./tmp" // " os.TempDir()"
-	err = os.MkdirAll(tempDir, 0755)
-	if err != nil {
-		log.Fatal(err)
-	}
-	receivedFilePath := filepath.Join(tempDir, "received_video.mp4")
-	file, err := os.Create(receivedFilePath)
-	if err != nil {
-		log.Fatal(err)
-	}
-	defer file.Close()
+		c.String(200, "File uploaded successfully")
 
-	// Copy the data from the connection to the file
-	n, err := io.CopyN(file, conn, size)
-	if err != nil {
-		log.Fatal(err)
-	}
+	})
 
-	fmt.Printf("Received %d bytes and saved to %s\n", n, receivedFilePath)
-}
-
-func sendFile(filePath string) error {
-	file, err := os.Open(filePath)
-	if err != nil {
-		return err
-	}
-	defer file.Close()
-
-	// Get the file size
-	fileInfo, err := file.Stat()
-	if err != nil {
-		return err
-	}
-	size := fileInfo.Size()
-
-	conn, err := net.Dial("tcp", ":8080")
-	if err != nil {
-		return err
-	}
-	defer conn.Close()
-
-	// Send the file size first
-	err = binary.Write(conn, binary.LittleEndian, size)
-	if err != nil {
-		return err
-	}
-
-	// Send the file data
-	n, err := io.CopyN(conn, file, size)
-	if err != nil {
-		return err
-	}
-
-	fmt.Printf("Sent %d bytes over the network from file %s\n", n, filePath)
-	return nil
+	r.Run(":8080")
 }
 
 func main() {
-	fileName := "XVR_ch1_main_20210910141900_20210910142500.mp4"
-	// Simulate sending a file after a delay
-	go func() {
-		time.Sleep(4 * time.Second)
-		err := sendFile(fileName) // Change this to the actual path of your MP4 file
-		if err != nil {
-			log.Fatal(err)
-		}
-	}()
+	// CLI flags
+	mode := flag.String("mode", "cli", "Mode of operation: cli or http")
+	filePath := flag.String("file", "", "Path to the file to send")
+	address := flag.String("address", "localhost:8080", "Address to send the file to")
+	saveDir := flag.String("save-dir", os.TempDir(), "Directory to save received files")
 
-	server := &FileServer{}
-	server.start()
+	flag.Parse()
+
+	switch *mode {
+	case "cli":
+		if *filePath != "" {
+			// Sending mode
+			if err := sendFile(*filePath, *address); err != nil {
+				log.Fatalf("Failed to send file: %v", err)
+			}
+		} else {
+			// Receiving mode
+			startServer(*saveDir)
+		}
+	case "http":
+		// Start HTTP server with Gin
+		startHTTPServer(*saveDir)
+	default:
+		log.Fatalf("Unknown mode: %s", *mode)
+	}
 }
