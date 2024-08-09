@@ -1,4 +1,4 @@
-# File Handler
+# Large File Streaming in Go over HTTP
 
 This is a simple Go project that demonstrates how to send and receive files using Go. The project has two modes: CLI and HTTP.
 
